@@ -1,0 +1,132 @@
+<html>
+<head>
+<title>RingLock for AVR Microcontrollers</title>
+</head>
+<body>
+
+<h1>RingLock</h1>
+<h2>How it started</h2>
+After reading about <a href="http://piclock.wordpress.com/2010/10/08/picloc/">PIClock4</a> 
+a inter-microcontroller mutex on <a href="http://dangerousprototypes.com/2011/09/26/piclock4-inter-microcontroller-mutex/">dangerousprototypes.com</a>, 
+I got curious about the actual implementation.<br/>
+It uses shift registers to pass a token in form of just a single bit around.<br/>
+Once the token arrives at a mcu that needs access to the resource, the mcu can stop the shifting.<br/>
+After having done whatever it needs the resource for, it can start the shifting again.<br/>
+Unfortunately the schematic files were down, so I had to ask for them.<br/>
+The marker of piclock told me that his project was just for fun and never intended for actual usage.<br/>
+Because of the huge amount of logic chips needed he suggested rather using a arduino/atmega328 to emulate the hardware in software.<br/>
+That's what got me thinking initially.<br/>
+Using a 32k flash mcu to emulate 9 logic ics, sounded terribly wasteful to me.<br/>
+<i>First idea :</i> I could use a Attiny instead.<br/>
+<i>Advantages :</i> I would not waste that much flash space. <br/>
+<i>Disadvantage :</i> Attinys have only few IO-pins and therefore the amount of mcus that can be attached to the lock is limited.<br/> 
+<br/>
+So I was looking for a solution that allows a huge number of mcus, while needing no/not much additional hardware.<br/>
+At some point I got reminded of <a href="http://en.wikipedia.org/wiki/Token_ring">token ring networks</a>, something I've never seen myself,<br/>
+because it's a rather old technique and at least for computer networks totally replaced by Ethernet.<br/>
+It's basic ideas is that the hosts pass a token from one to the next in a ring like topology.<br/>
+Once a host gets a token he is allowed to attach data to it while passing it on.<br/>
+This is very similar to the bit that gets shifted around in the piclock system,<br/>
+but it does not require a central piece of hardware controlling the whole process.<br/>
+That sounded just like the thing I wanted.<br/>
+<br/>
+After googling for a while I found a few implementations for token passing on microcontrollers,<br>  
+but the majority of them were integrated in other projects and designed for a single usage scenario.<br/>
+At that point I started experimenting with an own implementation.<br/>
+It had easily configurable for different AVR mcus and applicable to various scenarios where multiple mcus access the same resource.<br/>
+<br/>
+<b>
+It's important to notice that I don't claim this to be a full featured library.<br/>
+Let's be honest, there not even enough lines of code to call this a program.<br/>
+I rather wanted to present the idea behind it, as well as providing a little reference implementation.<br/>
+So just think of this as a request for comments.<br/>
+</b>
+
+<h2>How it works</h2>
+The basic idea is to implement a decentralized <a href="http://en.wikipedia.org/wiki/Token_passing">token passing mechanism</a>,<br>
+allowing multiple mcus to share access to a resource like some kind of memory, a sensor or a communication interface of some kind.<br>
+Each mcu has one of its IO Pins connected to the external interrupt pin e.g. INT0 of the next mcu.<br>
+The last mcu in this chain has one of its IOs connected to the interrupt pin of the first one.<br>
+This results in a ring topology as shown below.<br/>
+<br/>
+<img src="ringlock_idea.png"/>
+<br/>
+When everything is powered up somebody has to have the token and the access initially.<br/>
+I called this special mcu master.<br/>
+It does whatever it needs to do with the resource and then pulls his IO-pin (called PYX in the drawing) high for 1us.<br/>
+Slave 1 will get interrupted because of the rising signal at his INT0.<br/>
+In his ISR he will check whether the rest of his program has requested access to the resource.<br/>
+This is done by simply checking a flag. If the flag is not set it will pass the token to slave 2 immediately in his ISR.<br/>
+Otherwise it will set a flag, signalling the program that it can now access the resource and leave the ISR.<br/>
+It's now up to the program to work with the shared resource for a while and to pass on the token.<br/>
+The next mcus will do exactly the same thing and the token will circulate in the ring infinitely.<br/>
+<br/>
+At least theory.<br/>
+In praxis you'll sooner or later lose the token, simply because of murphys law.<br/>
+Imagine a mcu crashes, there is a power failure or a bad connection.<br/>
+Having lost the token, the system will get stuck since no one is allowed to access the shared resource.<br/>
+Every mcu waits for the token, that will never arrive.<br/>
+That's the point where a time out might come handy.<br/>
+Using a timer of the master mcu it's easy to implement one.<br/>
+The timer gets reset every time the master gets the token back from the last mcu in the ring.<br/>
+If the token doesn't arrive in time, the master assumes that it was lost and pretends to have the token.<br/>
+The new token will be passed on and everything is hopefully working again.<br>
+Still there is one pitfall in this approach, the timeout has to be chosen carefully.<br/>
+If the master sends a new token while another is still on the ring, to mcu will try to work with the resource, <br/>
+which is in fact the situation we are trying to avoid using lock.<br/>
+The best idea is to use a timeout that is at least 1,5 times as long, as the longest time a token need back to the master.<br/>
+<br/>
+
+<h2>How to use it</h2>
+There are two ways of getting the source code :<br/>
+<ol>
+	<li>Get the tarball <a href="#">here</a></li>
+	<li>Clone the hg repository: <b>hg clone <a href="#">hg repo url here</a></b></li>
+</ol>
+<br/>
+Once you got the source, you'll want to adjust the configuration in <i>include/ringlock.h</i>.<br/>
+The config is documented there and changing it should be pretty straight forward.<br/>
+<br/>
+Using the makefile is a bit more complex then the usual <i>make all</i>.<br/>
+There are some variables that need to be set :<br/>
+<ul>
+	<li><b>LOCKROLE</b> sets role of the mcu in the ring. Can be master or slave.</li>
+	<li><b>AVRMCU</b> sets the mcu. Can be atmega8 or atmega32. If you want an other mcu add it in <i>include/ringlock.h</i>.</li>
+	<li><b>F_CPU</b> set the frequency of the mcu in Hz.</li>
+</ul>
+So if you want to build a slave for an Atmega8 with 8mHz call <i>make ROLE=slave AVRMCU=atmega8 F_CPU=8000000 all</i>.<br/>
+Currently the source only supports Atmega32 as master or slave and Atmega8 as slave.<br/>
+This can be changed by extending the configs in <i>include/ringlock.h</i>.<br/>
+Once you have added a new mcu, it would be nice to send me patch so I can add it to the source.<br/>
+<br/>
+Using the ringlock in your source code is simple, it boils down to 4 functions :<br/>
+<ul>
+<li>rl_init() sets up timers and ports</li>
+<li>rl_request_lock() tells the ISR to keep the token</li>
+<li>rl_have_lock() retuns 1 if the mcu has the lock, else 0</li>
+<li>rl_release_lock() releases the lock again</li>
+</ul>
+
+<h2>Example</h2>
+Since this was a solution to which I didn't have a Problem I made one up :<br/>
+One ATmega32 (Master) and one Atmega8 (Slave) share the TXD line of a RS232 connection.<br/>
+I used the OpenBench LogicSniffer to measure the signals.<br/> 
+<br/>
+<img src="ringlock_test.png">
+<br/>
+<br/>
+The and gate was in a HCF4081.<br/>
+If you set the TXD of the passive mcu to high-Z you won't need it, but I wanted the unmixed signals as well.<br/>
+The program used in this test is bundled with the sourcecode as <i>main.c</i>.<br/>
+<br/>
+Here are all the signals in the jawis OLS client:<br/>
+<a href="test.png"/><img src="test_short.png"></a>
+<br/>
+and a photo of my setup :<br/>
+<img src="photo.jpg"/><br/>
+<br/>
+<br/>
+So that's all so far.<br/>
+Have fun with this stuff and <i>please</i> don't waste an entire Atmega32 on locks.<br/>
+</body>
+</html>

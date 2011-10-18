@@ -1,12 +1,8 @@
 /*
- * main.c
+ *  main.c
  *
  *  Created on: Sep 28, 2011
- *      Author: sebastian
- *
- *	Makefile
- *	Created on: Sep 28, 2011
- *	Author: sebastian
+ *  Author: sebastian
  *
  *	This file is part of the RingLock-library for Atmel AVR MCUS.
  *
