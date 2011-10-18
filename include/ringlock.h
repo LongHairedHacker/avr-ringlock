@@ -22,6 +22,7 @@
  *	Copyright Sebastian Schumb (sebastian_at_sebastians-site_de) 2011
  */
 
+
 #ifndef RINGLOCK_H_
 #define RINGLOCK_H_ RINGLOCK_H_
 
